@@ -1,0 +1,4 @@
+interface:
+  display_name: "Portable Thesis Env"
+  short_description: "Prepare Python and officecli tooling"
+  default_prompt: "Audit and prepare the local thesis DOCX tooling environment."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Portable Thesis Template"
+  short_description: "Extract requirements from thesis templates"
+  default_prompt: "Analyze this school thesis DOCX template into requirements."

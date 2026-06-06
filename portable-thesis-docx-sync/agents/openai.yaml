@@ -1,0 +1,4 @@
+interface:
+  display_name: "Portable Thesis DOCX Sync"
+  short_description: "Sync thesis md edits into DOCX copies"
+  default_prompt: "Sync thesis Markdown changes into a protected DOCX copy."

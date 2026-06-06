@@ -1,0 +1,4 @@
+interface:
+  display_name: "Portable Thesis Xref QA"
+  short_description: "Audit thesis DOCX refs and citations"
+  default_prompt: "Audit this thesis DOCX for captions, refs, and citations."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Portable Thesis Markdown"
+  short_description: "Create a git-backed thesis md workspace"
+  default_prompt: "Create a Markdown thesis workspace from template requirements."

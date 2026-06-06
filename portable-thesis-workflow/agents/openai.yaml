@@ -1,0 +1,4 @@
+interface:
+  display_name: "Portable Thesis Workflow"
+  short_description: "Track thesis work from template to DOCX"
+  default_prompt: "Start and track a thesis project from a school DOCX template."
