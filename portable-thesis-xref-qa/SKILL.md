@@ -16,6 +16,16 @@ Use this skill on a DOCX copy, not on the official template or source document.
 
 Read `references/xref-contract.md` before applying repairs.
 
+Use bundled scripts before writing custom code:
+
+```bash
+python <skill-dir>/scripts/xref_audit.py --docx <output.docx> --source-docx <pre-repair-output-or-template.docx>
+python <skill-dir>/scripts/add_refs.py --docx <output.docx> --out <output_xref.docx> --apply
+python <skill-dir>/scripts/xref_audit.py --docx <output_xref.docx> --source-docx <output.docx>
+```
+
+Do not create project-root scripts such as `xref_qa_audit.py` or `add_bidirectional_refs.py`. If the bundled audit or repair script is insufficient, patch the script in this skill and rerun it so the behavior remains reusable.
+
 ## Rules
 
 - Never edit the source DOCX directly.
@@ -24,13 +34,16 @@ Read `references/xref-contract.md` before applying repairs.
 - Existing correct fields stay untouched.
 - Treat caption insertion that changes numbering as manual-confirm, not automatic repair.
 - Disable `officecli` resident/background behavior for read-only validation when supported.
+- Audit first, repair second, audit again after repair. Do not repair from memory or from a prose-only issue list.
+- For the post-repair audit, pass the pre-repair DOCX copy as `--source-docx`. This lets inherited source noise, such as existing orphan bookmarkEnd ids, be reported separately from new repair damage.
+- The bundled `add_refs.py` is low-risk only. It may add fields/bookmarks for unambiguous static captions, body labels, bibliography entries, and citation markers. Anything beyond that is a manual-confirm item or a reusable script enhancement.
 
 ## Audit Categories
 
 Check:
 
 - figure/table/equation/algorithm captions and numbering;
-- body mentions such as `Figure 1-1`, `Fig. 1-1`, `图1-1`, or `表1-1` that should be REF fields;
+- body mentions such as `Figure 1-1`, `Fig. 1-1`, `\u56fe1-1`, or `\u88681-1` that should be REF fields;
 - range references where each endpoint should be a field;
 - bibliography citations such as `[1]` that should link to bibliography bookmarks;
 - cached bibliography citation text superscript formatting;
@@ -73,6 +86,16 @@ Run structural checks:
 Run `officecli validate <copy.docx>` when available. Compare errors with the source DOCX and report inherited template noise separately.
 
 Render QA requires external tools such as LibreOffice/`soffice`, `pdftoppm`, `pdf2image`, and `Pillow`. If missing, state that render QA was not completed.
+
+## Handoff
+
+After QA, update `workflow/status.md` or the Trellis task with:
+
+- `currentPhase: qa-complete` when no blocking issue remains, otherwise `currentPhase: xref-qa`;
+- audit JSON/Markdown paths;
+- repair sidecar path if repairs were applied;
+- remaining `manualConfirm` items;
+- the next skill only if further work is required.
 
 ## Final Report
 

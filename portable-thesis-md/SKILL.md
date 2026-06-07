@@ -56,11 +56,13 @@ Adapt chapter files to the template analysis and user domain. Do not force this 
 5. Update project profile:
    Set `workflow.currentPhase` to `drafting` and record workspace paths.
 
-You may use the bundled scaffold helper:
+Use the bundled scaffold helper for new workspaces:
 
 ```bash
 python <skill-dir>/scripts/scaffold_md_workspace.py --root <project-root> --profile thesis-project.json --chapters "1 Introduction;2 Design;3 Testing"
 ```
+
+If the helper lacks a reusable option you need, patch this skill's helper rather than writing a project-root scaffolding script.
 
 ## Do Not
 
@@ -68,6 +70,15 @@ python <skill-dir>/scripts/scaffold_md_workspace.py --root <project-root> --prof
 - Do not invent school requirements that were not found in the template or provided by the user.
 - Do not create a DOCX in this skill; hand off to `portable-thesis-docx-sync`.
 - Do not include generated build artifacts in git by default.
+- Do not continue into DOCX generation without loading `portable-thesis-docx-sync/SKILL.md`.
+
+## Handoff
+
+After scaffolding or updating Markdown files, update `workflow/status.md` or the Trellis task with:
+
+- `currentPhase: drafting` while content is incomplete, or `currentPhase: docx-sync` when the user asks to generate DOCX;
+- `nextSkill: portable-thesis-docx-sync` once DOCX output is requested;
+- created/skipped files and any chapter decisions that affect DOCX sync.
 
 ## Final Report
 

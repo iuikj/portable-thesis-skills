@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+"""Audit thesis DOCX cross-references without modifying the document."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import zipfile
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+
+from lxml import etree
+
+W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+W = f"{{{W_NS}}}"
+
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def text_of_para(para: etree._Element) -> str:
+    return "".join(t.text or "" for t in para.iter(f"{W}t"))
+
+
+def parse_fields(para: etree._Element) -> list[dict[str, str]]:
+    fields: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    instr_parts: list[str] = []
+    result_parts: list[str] = []
+
+    for run in para.iter(f"{W}r"):
+        fld_char = run.find(f"{W}fldChar")
+        instr_text = run.find(f"{W}instrText")
+        text = run.find(f"{W}t")
+
+        if fld_char is not None:
+            fld_type = fld_char.get(f"{W}fldCharType")
+            if fld_type == "begin":
+                current = {"instr": "", "result": ""}
+                instr_parts = []
+                result_parts = []
+            elif fld_type == "separate" and current is not None:
+                current["instr"] = "".join(instr_parts).strip()
+            elif fld_type == "end" and current is not None:
+                if current["instr"]:
+                    current["result"] = "".join(result_parts)
+                    fields.append(current)
+                current = None
+
+        if current is not None:
+            if instr_text is not None:
+                instr_parts.append(instr_text.text or "")
+            elif text is not None and current["instr"]:
+                result_parts.append(text.text or "")
+
+    for field in para.iter(f"{W}fldSimple"):
+        instr = field.get(f"{W}instr", "").strip()
+        result = "".join(t.text or "" for t in field.iter(f"{W}t"))
+        if instr:
+            fields.append({"instr": instr, "result": result})
+
+    return fields
+
+
+def field_type(instr: str) -> str:
+    parts = instr.strip().split()
+    return parts[0].upper() if parts else "UNKNOWN"
+
+
+def ref_target(instr: str) -> str | None:
+    parts = instr.strip().split()
+    if len(parts) >= 2 and parts[0].upper() in {"REF", "PAGEREF"}:
+        return parts[1]
+    return None
+
+
+def looks_like_code_context(text: str) -> bool:
+    code_markers = ["def ", "class ", "return ", "import ", "for ", "while ", "=", "(", ")", "{", "}", ";"]
+    return sum(1 for marker in code_markers if marker in text) >= 2
+
+
+def bookmark_report(root: etree._Element) -> dict[str, object]:
+    starts = []
+    ends = []
+    for node in root.iter(f"{W}bookmarkStart"):
+        starts.append({"id": node.get(f"{W}id"), "name": node.get(f"{W}name")})
+    for node in root.iter(f"{W}bookmarkEnd"):
+        ends.append({"id": node.get(f"{W}id")})
+    start_ids = [x["id"] for x in starts]
+    end_ids = [x["id"] for x in ends]
+    return {
+        "starts": starts,
+        "startCount": len(starts),
+        "endCount": len(ends),
+        "duplicateStartIds": [k for k, v in Counter(start_ids).items() if v > 1],
+        "missingEndIds": sorted(set(start_ids) - set(end_ids)),
+        "orphanEndIds": sorted(set(end_ids) - set(start_ids)),
+    }
+
+
+def source_bookmark_noise(source_docx: Path | None) -> dict[str, set[str]]:
+    if source_docx is None:
+        return {"missingEndIds": set(), "orphanEndIds": set()}
+    try:
+        with zipfile.ZipFile(source_docx, "r") as zf:
+            root = etree.fromstring(zf.read("word/document.xml"))
+        report = bookmark_report(root)
+        return {
+            "missingEndIds": set(report["missingEndIds"]),  # type: ignore[arg-type]
+            "orphanEndIds": set(report["orphanEndIds"]),  # type: ignore[arg-type]
+        }
+    except Exception:
+        return {"missingEndIds": set(), "orphanEndIds": set()}
+
+
+def in_references_section(text: str, ref_section_active: bool) -> tuple[bool, bool]:
+    stripped = text.strip()
+    if stripped in {"参考文献", "References", "REFERENCES"}:
+        return True, True
+    if ref_section_active and stripped in {"致谢", "致  谢", "附录", "Appendix", "Appendices"}:
+        return False, False
+    return ref_section_active, False
+
+
+def audit_docx(docx: Path, source_docx: Path | None = None) -> dict[str, object]:
+    stat = docx.stat()
+    report: dict[str, object] = {
+        "schemaVersion": 1,
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "file": {
+            "path": str(docx),
+            "sha256": sha256(docx),
+            "size": stat.st_size,
+            "mtime": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        },
+        "sourceProtection": None,
+        "structure": {},
+        "fields": {"total": 0, "byType": {}, "fldCharBalance": {}},
+        "bookmarks": {},
+        "captions": [],
+        "bodyReferences": [],
+        "bibliography": {"entries": [], "citations": []},
+        "issues": [],
+        "manualConfirm": [],
+    }
+    if source_docx:
+        src_stat = source_docx.stat()
+        report["sourceProtection"] = {
+            "path": str(source_docx),
+            "sha256": sha256(source_docx),
+            "size": src_stat.st_size,
+            "mtime": datetime.fromtimestamp(src_stat.st_mtime, timezone.utc).isoformat(),
+        }
+
+    with zipfile.ZipFile(docx, "r") as zf:
+        names = zf.namelist()
+        root = etree.fromstring(zf.read("word/document.xml"))
+        body = root.find(f"{W}body")
+        paragraphs = list(body.iter(f"{W}p")) if body is not None else []
+        tables = list(body.iter(f"{W}tbl")) if body is not None else []
+
+        fields: list[dict[str, str]] = []
+        for para in paragraphs:
+            fields.extend(parse_fields(para))
+
+        by_type: dict[str, int] = {}
+        for field in fields:
+            kind = field_type(field["instr"])
+            by_type[kind] = by_type.get(kind, 0) + 1
+
+        begins = sum(1 for x in root.iter(f"{W}fldChar") if x.get(f"{W}fldCharType") == "begin")
+        separates = sum(1 for x in root.iter(f"{W}fldChar") if x.get(f"{W}fldCharType") == "separate")
+        ends = sum(1 for x in root.iter(f"{W}fldChar") if x.get(f"{W}fldCharType") == "end")
+
+        bookmarks = bookmark_report(root)
+        bookmark_names = {x["name"] for x in bookmarks["starts"] if x.get("name")}  # type: ignore[index]
+
+        report["structure"] = {
+            "zipPartCount": len(names),
+            "paragraphCount": len(paragraphs),
+            "tableCount": len(tables),
+        }
+        report["fields"] = {
+            "total": len(fields),
+            "byType": by_type,
+            "all": fields[:200],
+            "fldCharBalance": {
+                "begin": begins,
+                "separate": separates,
+                "end": ends,
+                "balanced": begins == separates == ends,
+            },
+        }
+        report["bookmarks"] = bookmarks
+
+        caption_pat = re.compile(
+            r"^\s*((?:图|表|算法|Figure|Table|Algorithm|Fig\.|Tbl\.)\s*\d+[-.]\d+)\b",
+            re.IGNORECASE,
+        )
+        body_label_pat = re.compile(
+            r"((?:如图|如表|见图|见表|图|表|Figure|Table|Fig\.|Tbl\.)\s*\d+[-.]\d+)",
+            re.IGNORECASE,
+        )
+        cite_pat = re.compile(r"\[(\d+(?:\s*[,;，、]\s*\d+)*)\]")
+        bib_entry_pat = re.compile(r"^\[(\d+)\]")
+
+        ref_section = False
+        bibliography_entry_numbers: set[str] = set()
+        for idx, para in enumerate(paragraphs):
+            text = text_of_para(para).strip()
+            if not text:
+                continue
+            ref_section, just_started_refs = in_references_section(text, ref_section)
+            para_fields = parse_fields(para)
+
+            cap_match = caption_pat.search(text)
+            if cap_match:
+                report["captions"].append(
+                    {
+                        "paragraphIndex": idx,
+                        "label": cap_match.group(1),
+                        "text": text[:200],
+                        "hasField": bool(para_fields),
+                    }
+                )
+                continue
+
+            if ref_section and not just_started_refs:
+                bib_match = bib_entry_pat.search(text)
+                if bib_match:
+                    bibliography_entry_numbers.add(bib_match.group(1))
+                    report["bibliography"]["entries"].append(  # type: ignore[index]
+                        {"paragraphIndex": idx, "number": bib_match.group(1), "text": text[:220]}
+                    )
+                continue
+
+            for match in body_label_pat.finditer(text):
+                report["bodyReferences"].append(
+                    {
+                        "paragraphIndex": idx,
+                        "label": match.group(1),
+                        "context": text[:220],
+                        "hasField": bool(para_fields),
+                    }
+                )
+            for match in cite_pat.finditer(text):
+                nums = [x for x in re.split(r"\s*[,;，、]\s*", match.group(1)) if x]
+                if "0" in nums or looks_like_code_context(text):
+                    continue
+                report["bibliography"]["citations"].append(  # type: ignore[index]
+                    {
+                        "paragraphIndex": idx,
+                        "label": match.group(0),
+                        "context": text[:220],
+                        "hasField": bool(para_fields),
+                    }
+                )
+
+        issues = report["issues"]  # type: ignore[assignment]
+        if not report["fields"]["fldCharBalance"]["balanced"]:  # type: ignore[index]
+            issues.append({"severity": "error", "type": "unbalanced-fields", "repairable": False})
+        inherited_noise = source_bookmark_noise(source_docx)
+        missing_end_ids = set(bookmarks["missingEndIds"])  # type: ignore[arg-type]
+        orphan_end_ids = set(bookmarks["orphanEndIds"])  # type: ignore[arg-type]
+        new_missing_end_ids = sorted(missing_end_ids - inherited_noise["missingEndIds"])
+        new_orphan_end_ids = sorted(orphan_end_ids - inherited_noise["orphanEndIds"])
+        inherited_missing_end_ids = sorted(missing_end_ids & inherited_noise["missingEndIds"])
+        inherited_orphan_end_ids = sorted(orphan_end_ids & inherited_noise["orphanEndIds"])
+
+        if new_missing_end_ids or new_orphan_end_ids:
+            issues.append({"severity": "error", "type": "unpaired-bookmarks", "repairable": False})
+        if inherited_missing_end_ids or inherited_orphan_end_ids:
+            issues.append(
+                {
+                    "severity": "info",
+                    "type": "inherited-template-bookmark-noise",
+                    "missingEndIds": inherited_missing_end_ids,
+                    "orphanEndIds": inherited_orphan_end_ids,
+                    "repairable": False,
+                }
+            )
+
+        orphan_refs = []
+        for field in fields:
+            target = ref_target(field["instr"])
+            if target and target not in bookmark_names:
+                orphan_refs.append(target)
+        if orphan_refs:
+            issues.append(
+                {
+                    "severity": "error",
+                    "type": "orphan-ref-targets",
+                    "targets": sorted(set(orphan_refs)),
+                    "repairable": False,
+                }
+            )
+
+        for item in report["bodyReferences"]:  # type: ignore[assignment]
+            if not item["hasField"]:
+                issues.append(
+                    {
+                        "severity": "info",
+                        "type": "static-body-reference",
+                        "label": item["label"],
+                        "paragraphIndex": item["paragraphIndex"],
+                        "repairable": "needs-unambiguous-caption-target",
+                    }
+                )
+        for item in report["bibliography"]["citations"]:  # type: ignore[index]
+            if not item["hasField"]:
+                nums = [x for x in re.findall(r"\d+", str(item["label"]))]
+                if bibliography_entry_numbers and not all(num in bibliography_entry_numbers for num in nums):
+                    issues.append(
+                        {
+                            "severity": "info",
+                            "type": "static-bracket-not-bibliography",
+                            "label": item["label"],
+                            "paragraphIndex": item["paragraphIndex"],
+                            "repairable": False,
+                        }
+                    )
+                    continue
+                issues.append(
+                    {
+                        "severity": "info",
+                        "type": "static-bibliography-citation",
+                        "label": item["label"],
+                        "paragraphIndex": item["paragraphIndex"],
+                        "repairable": "needs-unambiguous-bibliography-entry",
+                    }
+                )
+
+    return report
+
+
+def write_markdown(report: dict[str, object], path: Path) -> None:
+    fields = report["fields"]  # type: ignore[assignment]
+    bookmarks = report["bookmarks"]  # type: ignore[assignment]
+    lines = [
+        "# Xref QA Audit",
+        "",
+        f"- DOCX: `{report['file']['path']}`",  # type: ignore[index]
+        f"- SHA256: `{report['file']['sha256']}`",  # type: ignore[index]
+        f"- Fields: {fields['total']} {fields['byType']}",
+        f"- fldChar balanced: {fields['fldCharBalance']['balanced']}",
+        f"- Bookmarks: start={bookmarks['startCount']} end={bookmarks['endCount']}",
+        f"- Captions: {len(report['captions'])}",  # type: ignore[arg-type]
+        f"- Body refs: {len(report['bodyReferences'])}",  # type: ignore[arg-type]
+        f"- Bibliography citations: {len(report['bibliography']['citations'])}",  # type: ignore[index]
+        f"- Issues: {len(report['issues'])}",  # type: ignore[arg-type]
+        "",
+        "## Issues",
+        "",
+    ]
+    for issue in report["issues"]:  # type: ignore[assignment]
+        lines.append(f"- {issue['severity']}: {issue['type']} {issue.get('label', '')}")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--docx", required=True, help="DOCX copy to audit")
+    parser.add_argument("--source-docx", help="Optional original source/template DOCX")
+    parser.add_argument("--out-json", help="JSON report path")
+    parser.add_argument("--out-md", help="Markdown report path")
+    args = parser.parse_args()
+
+    docx = Path(args.docx).resolve()
+    source = Path(args.source_docx).resolve() if args.source_docx else None
+    report = audit_docx(docx, source)
+
+    out_json = Path(args.out_json).resolve() if args.out_json else docx.with_suffix(".xref_audit.json")
+    out_md = Path(args.out_md).resolve() if args.out_md else docx.with_suffix(".xref_audit.md")
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    out_json.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_markdown(report, out_md)
+    print(out_json)
+    print(out_md)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

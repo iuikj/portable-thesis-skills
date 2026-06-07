@@ -52,6 +52,7 @@ External tools such as LibreOffice/`soffice`, `pdftoppm`, Node.js, npm, and `off
 4. Install Python packages with `uv pip install ...` or `<venv-python> -m pip install ...`.
 5. Check `officecli`; if missing, explain the required install command for the user's platform and ask before running it.
 6. Update `thesis-project.json.tools` with resolved command paths and versions.
+7. Update `workflow/status.md` or the Trellis task with `currentPhase: markdown` and `nextSkill: portable-thesis-md` when the environment is usable.
 
 ## Do Not
 
@@ -59,6 +60,7 @@ External tools such as LibreOffice/`soffice`, `pdftoppm`, Node.js, npm, and `off
 - Do not assume Windows paths, PowerShell, or a fixed venv location.
 - Do not make a DOCX edit just to test the environment.
 - Do not claim render QA is available unless `soffice`/LibreOffice and PDF-to-image tooling are actually present.
+- Do not continue into Markdown scaffolding or DOCX sync from this skill without loading the next child skill's `SKILL.md`.
 
 ## Final Report
 

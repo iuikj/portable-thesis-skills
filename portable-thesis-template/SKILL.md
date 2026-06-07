@@ -30,17 +30,19 @@ If no template path is provided, create `template/` in the thesis project root a
    Use `thesis-project.json.template.sourceDocx` if present. Otherwise inspect `template/*.docx`. If multiple templates exist, ask the user which one is official.
 
 2. Run read-only probes:
-   Prefer `officecli` for high-level structure when available. Also run the bundled fallback probe:
+   Prefer `officecli` for high-level structure when available. Always run the bundled fallback probe before writing your final analysis; it handles templates that `python-docx` cannot open because of stale OLE relationships.
 
    ```bash
-   python <skill-dir>/scripts/docx_template_probe.py --docx <template.docx> --out <template-analysis.json>
+   python <skill-dir>/scripts/docx_template_probe.py --docx <template.docx> --out <template-analysis.json> --markdown-out <template-analysis.md>
    ```
+
+   Use the script from this skill directory. Do not write `analyze_template.py` or another large one-off template parser into the thesis project root. If the bundled probe misses evidence you need, patch this script in the skill and rerun it.
 
 3. Extract requirements:
    Read body paragraphs, tables, styles, headers/footers, captions, numbering examples, reference examples, and red/colored instruction text when available. Supplement with official written requirements if provided.
 
 4. Produce JSON and Markdown:
-   Follow `references/template-analysis-schema.md`. The JSON must include stable top-level keys: `sourceFiles`, `templateRequirements`, `templateScan`, `conflicts`, and `workflowRecommendations`.
+   Follow `references/template-analysis-schema.md`. Start from the bundled probe JSON instead of creating a fresh schema. The JSON must include stable top-level keys: `sourceFiles`, `templateRequirements`, `templateScan`, `conflicts`, and `workflowRecommendations`.
 
 5. Update project profile:
    If `thesis-project.json` exists, set `template.sourceDocx`, `template.analysisJson`, `template.analysisMarkdown`, and `workflow.currentPhase`.
@@ -67,6 +69,16 @@ Ask the user before deciding:
 - whether non-template handbook text overrides template text;
 - whether an ambiguous front-matter page is protected or editable;
 - whether a detected example section should become actual chapter structure.
+
+## Handoff
+
+After template analysis, update `workflow/status.md` or the Trellis task with:
+
+- `currentPhase: environment` if tool setup is still unknown, otherwise `currentPhase: markdown`;
+- `nextSkill: portable-thesis-env` or `nextSkill: portable-thesis-md`;
+- paths to the JSON and Markdown analysis artifacts.
+
+When continuing in the same session, immediately load the named next skill's `SKILL.md` before doing that phase's work.
 
 ## Final Report
 

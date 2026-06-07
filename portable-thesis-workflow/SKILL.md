@@ -9,12 +9,15 @@ Use this as the main entry skill for a new, reusable thesis project. It coordina
 
 ## Skill Routing
 
+- Before doing phase-specific work, explicitly load and follow the matching child skill's `SKILL.md`. Do not merely mention the next child skill in prose.
 - Use `portable-thesis-template` when the task is to collect or analyze the school's DOCX template.
 - Use `portable-thesis-env` when the task is to check Python, `uv`, virtualenv, packages, `officecli`, or the officecli skill.
 - Use `portable-thesis-md` when the task is to create the Markdown thesis workspace and chapter files.
 - Use `portable-thesis-docx-sync` when Markdown content must be inserted or incrementally synced into a protected DOCX copy.
 - Use `portable-thesis-xref-qa` when the task is caption, REF/SEQ/PAGEREF, bibliography citation, superscript, or render QA.
 - Prefer this `portable-thesis-*` suite for general/new projects. Prefer project-local skills, such as `thesis-docx-sync`, for already-customized local workflows.
+
+If a child skill is not installed in the current runtime, locate it from the project skill roots (`.agents/skills`, `.codex/skills`, `.claude/skills`, or the installed skill directory) and read its `SKILL.md` by path. If it still cannot be found, stop and report the missing skill; do not continue by inventing a fresh workflow.
 
 ## Project Profile
 
@@ -60,22 +63,22 @@ If the target project has no Trellis, create `workflow/` under the thesis root a
 ## End-to-End Workflow
 
 1. Template intake:
-   Create `template/` and ask the user to place the school DOCX template there if no path was provided. Run `portable-thesis-template`.
+   Load `portable-thesis-template`. Create `template/` and ask the user to place the school DOCX template there if no path was provided. Run the bundled template probe from that skill and write both JSON and Markdown analysis outputs.
 
 2. Environment bootstrap:
-   Run `portable-thesis-env`. Prefer `uv` if available, but allow `python -m venv` fallback. Do not silently install system tools.
+   Load `portable-thesis-env`. Prefer `uv` if available, but allow `python -m venv` fallback. Do not silently install system tools.
 
 3. Markdown workspace:
-   Run `portable-thesis-md` after template requirements are known. Create chapter files from template structure plus user preferences.
+   Load `portable-thesis-md` after template requirements are known. Use its scaffold helper when creating a new workspace, then adjust chapter files from template structure plus user preferences.
 
 4. Initial DOCX:
-   Use `portable-thesis-docx-sync` to copy the template and fill/replace only the content regions that the template analysis marks as editable. Preserve cover pages, declarations, authorization pages, headers, footers, styles, fields, and TOC structures unless the user explicitly changes them.
+   Load `portable-thesis-docx-sync`. Generate a sync plan first, then copy the template and fill/replace only the content regions that the template analysis marks as editable. Preserve cover pages, declarations, authorization pages, headers, footers, styles, fields, and TOC structures unless the user explicitly changes them.
 
 5. Iteration:
    Track Markdown changes in git. Sync only targeted changes into a protected DOCX copy and tag synced commits with the configured `baselineTagPrefix`.
 
 6. Closing QA:
-   Run `portable-thesis-xref-qa` on the output DOCX. Report field integrity, caption/reference status, bibliography citation status, validation results, and render QA status.
+   Load `portable-thesis-xref-qa` on the output DOCX. Run its bundled audit script before any repair. Report field integrity, caption/reference status, bibliography citation status, validation results, and render QA status.
 
 ## Non-Negotiable Rules
 
@@ -85,6 +88,8 @@ If the target project has no Trellis, create `workflow/` under the thesis root a
 - Keep project paths, interpreter paths, and filenames configurable.
 - Preserve Word fields and bookmarks: never flatten `SEQ`, `REF`, `PAGEREF`, `fldChar`, `instrText`, or bookmarks during sync or QA.
 - Ask for user confirmation before any repair that changes numbering, inserts missing captions, or may alter official front matter.
+- Do not write large one-off scripts such as `analyze_template.py`, `sync_to_docx.py`, `xref_qa_audit.py`, or `add_bidirectional_refs.py` into the thesis project root. Use bundled child-skill scripts. If a bundled script is insufficient, patch or extend the child skill resource and rerun it, so the fix remains reusable.
+- At every phase transition, write `workflow/status.md` with `currentPhase`, completed artifacts, and `nextSkill`. The next action must name the child skill to load, not just describe the task.
 
 ## Final Report
 

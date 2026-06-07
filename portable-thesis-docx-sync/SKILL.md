@@ -17,6 +17,15 @@ Use this skill to create or update DOCX outputs while preserving the official te
 
 Read `references/sync-contract.md` before editing any DOCX.
 
+Use bundled scripts before writing custom code:
+
+```bash
+python <skill-dir>/scripts/sync_markdown_docx.py --root <project-root> --profile thesis-project.json --plan-out <docx-output>.sync.json
+python <skill-dir>/scripts/sync_markdown_docx.py --root <project-root> --profile thesis-project.json --out <output.docx> --apply
+```
+
+The helper defaults to plan-only mode. Treat the plan as the review gate. If the helper lacks a needed reusable behavior, patch the helper in this skill and rerun it. Do not create a project-root `sync_to_docx.py` or another one-off large sync script.
+
 ## Core Rules
 
 - Never edit the source template or source DOCX directly.
@@ -29,13 +38,14 @@ Read `references/sync-contract.md` before editing any DOCX.
 ## Initial DOCX Workflow
 
 1. Confirm source template and output name.
-2. Copy the template to `docx/<template-stem>_draft_<shortsha-or-date>.docx`.
-3. Use template analysis to identify protected and editable regions.
-4. Fill cover metadata using existing tables/content controls where possible.
-5. Replace template sample/instruction text only inside editable regions.
-6. Insert Markdown content conservatively, preserving template styles.
-7. Validate the output and record a `.sync.json` sidecar.
-8. Run `portable-thesis-xref-qa` as the closing gate.
+2. Run the bundled sync helper in plan-only mode and review `manualConfirm`.
+3. Copy the template to `docx/<template-stem>_draft_<shortsha-or-date>.docx`.
+4. Use template analysis to identify protected and editable regions.
+5. Fill cover metadata using existing tables/content controls where possible.
+6. Replace template sample/instruction text only inside editable regions.
+7. Insert Markdown content conservatively, preserving template styles.
+8. Validate the output and record a `.sync.json` sidecar.
+9. Load and run `portable-thesis-xref-qa` as the closing gate.
 
 ## Incremental Sync Workflow
 
@@ -61,7 +71,7 @@ Read `references/sync-contract.md` before editing any DOCX.
    After user acceptance and a clean target commit, create or confirm a `to-docx-<shortsha>`-style baseline tag.
 
 8. Run xref QA:
-   Invoke `portable-thesis-xref-qa` before final report.
+   Load `portable-thesis-xref-qa` and invoke its audit before final report.
 
 ## Manual Confirmation Points
 
@@ -72,6 +82,16 @@ Ask before:
 - adding missing captions that may renumber existing captions;
 - flattening, updating, or deleting Word fields;
 - deleting intermediate artifacts.
+
+## Handoff
+
+After generating or updating a DOCX, update `workflow/status.md` or the Trellis task with:
+
+- `currentPhase: xref-qa`;
+- `nextSkill: portable-thesis-xref-qa`;
+- source DOCX path/hash, output DOCX path, sidecar path, and manual-confirm items.
+
+When continuing in the same session, immediately load `portable-thesis-xref-qa/SKILL.md` before auditing or repairing fields.
 
 ## Final Report
 
