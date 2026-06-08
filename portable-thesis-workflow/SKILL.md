@@ -73,13 +73,13 @@ If the target project has no Trellis, create `workflow/` under the thesis root a
 
 4. Initial DOCX:
    Load `portable-thesis-docx-sync`. Generate a sync plan first, then copy the template and fill/replace only the content regions that the template analysis marks as editable. Preserve cover pages, declarations, authorization pages, headers, footers, styles, fields, and TOC structures unless the user explicitly changes them.
-   Before handing off, verify the sync sidecar and output DOCX for converted inline Markdown, no visible Markdown residue, and two-character first-line indentation in body paragraphs.
+   Before handing off, verify the sync sidecar and output DOCX for `qualityGate.status`, official authorization page, Chinese abstract and keywords, no stale template examples/TOC text, converted inline Markdown, real Word tables for Markdown tables, no visible Markdown residue outside code blocks, paired bookmarks, fixed 20 pt body line spacing, and two-character first-line indentation in body paragraphs. If `qualityGate.status` is `blocked`, do not continue as if DOCX generation succeeded; patch the child skill helper or ask for manual confirmation.
 
 5. Iteration:
    Track Markdown changes in git. Sync only targeted changes into a protected DOCX copy and tag synced commits with the configured `baselineTagPrefix`.
 
 6. Closing QA:
-   Load `portable-thesis-xref-qa` on the output DOCX. Run its bundled audit script before any repair, then continue in that same child skill invocation through low-risk repair and post-repair audit when repairable issues exist. Do not stop after a prose audit unless there are no repairable issues or the next change needs user confirmation. Report pre/post counts, field integrity, caption/reference status, bibliography citation status, validation results, and render QA status.
+   Load `portable-thesis-xref-qa` on the output DOCX. Run its bundled audit script before any repair, then continue in that same child skill invocation through low-risk repair and post-repair audit when repairable issues exist. Do not stop after a prose audit unless there are no repairable issues or the next change needs user confirmation. Set `qa-complete` only when the final audit JSON has `completionGate.qaComplete: true`; otherwise keep `currentPhase: xref-qa` and `nextSkill: portable-thesis-xref-qa`. Report pre/post counts, field integrity, caption/reference status, bibliography citation status, validation results, and render QA status.
 
 ## Non-Negotiable Rules
 

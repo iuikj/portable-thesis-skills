@@ -69,7 +69,8 @@ After `xref_audit.py`, inspect the JSON issues and counts:
 - Treat missing caption `SEQ` fields as manual-confirm unless the template-specific numbering rule is known; do not ask `add_refs.py` to synthesize chapter-style `SEQ` fields from plain text captions.
 - Then rerun `xref_audit.py` on the repaired copy with `--source-docx <pre-repair-docx>`.
 - Report both pre-repair and post-repair counts.
-- Set `workflow/status.md` to `currentPhase: xref-qa` and `nextSkill: portable-thesis-xref-qa` while repairable issues remain. Set `qa-complete` only after the repair pass and post-repair audit.
+- Set `workflow/status.md` to `currentPhase: xref-qa` and `nextSkill: portable-thesis-xref-qa` while repairable or manual-confirm issues remain. Set `qa-complete` only when the post-repair audit JSON has `completionGate.qaComplete: true`.
+- Treat `completionGate` as authoritative. `orphan-ref-targets`, unbalanced fields, new unpaired bookmarks, remaining repairable static citations/references, and static figure/table mentions with missing caption targets all prevent `qa-complete`. Do not infer completion from a successful script exit alone.
 - If using a shell where heredoc quoting conflicts with Markdown or XML snippets, write temporary helper input files under the project `workflow/` or OS temp directory, run them, then record and clean them. Do not leave large helper scripts in the thesis project root.
 
 ## Manual Confirmation Items
@@ -94,6 +95,7 @@ Run structural checks:
 - no unresolved static body labels remain unless they are documented exceptions;
 - no static body bibliography markers remain unless documented exceptions;
 - bibliography REF cached text is superscript when required.
+- `completionGate.qaComplete` is true in the final audit JSON. If false, follow `completionGate.nextAction` and keep `nextSkill: portable-thesis-xref-qa`.
 
 Run `officecli validate <copy.docx>` when available. Compare errors with the source DOCX and report inherited template noise separately.
 
@@ -103,7 +105,7 @@ Render QA requires external tools such as LibreOffice/`soffice`, `pdftoppm`, `pd
 
 After QA, update `workflow/status.md` or the Trellis task with:
 
-- `currentPhase: qa-complete` when no blocking issue remains, otherwise `currentPhase: xref-qa`;
+- `currentPhase: qa-complete` only when final audit `completionGate.qaComplete` is true, otherwise `currentPhase: xref-qa`;
 - audit JSON/Markdown paths;
 - repair sidecar path if repairs were applied;
 - remaining `manualConfirm` items;

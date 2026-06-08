@@ -587,6 +587,16 @@ def run_repair(input_docx: Path, output_docx: Path) -> dict[str, object]:
             "bibliographyCitationRefs": citation_added,
         },
         "manualConfirm": manual_confirm,
+        "workflow": {
+            "qaComplete": False,
+            "currentPhase": "xref-qa",
+            "nextSkill": "portable-thesis-xref-qa",
+            "nextAction": "run-post-repair-audit",
+            "postRepairAudit": {
+                "docx": str(output_docx),
+                "sourceDocx": str(input_docx),
+            },
+        },
         "notes": [
             "Caption numbering text is not converted to SEQ automatically; chapter-style numbering requires manual confirmation or a template-specific rule.",
             "Bookmarks are inserted around existing label text only, not whole caption or bibliography paragraphs.",

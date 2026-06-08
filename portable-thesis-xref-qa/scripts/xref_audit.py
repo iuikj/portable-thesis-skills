@@ -17,6 +17,9 @@ from lxml import etree
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 W = f"{{{W_NS}}}"
 
+BLOCKING_ISSUE_TYPES = {"unbalanced-fields", "unpaired-bookmarks", "orphan-ref-targets"}
+REPAIRABLE_ISSUE_TYPES = {"static-body-reference", "static-bibliography-citation"}
+
 
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -278,6 +281,7 @@ def audit_docx(docx: Path, source_docx: Path | None = None) -> dict[str, object]
 
         ref_section = False
         bibliography_entry_numbers: set[str] = set()
+        caption_labels: set[str] = set()
         for idx, para in enumerate(paragraphs):
             text = text_of_para(para).strip()
             if not text:
@@ -297,6 +301,7 @@ def audit_docx(docx: Path, source_docx: Path | None = None) -> dict[str, object]
                         "hasField": range_covered_by_field(para, cap_start, cap_end, {"SEQ", "REF"}),
                     }
                 )
+                caption_labels.add(re.sub(r"\s+", "", cap_match.group(1)).replace(".", "-"))
                 continue
 
             if ref_section and not just_started_refs:
@@ -379,6 +384,19 @@ def audit_docx(docx: Path, source_docx: Path | None = None) -> dict[str, object]
 
         for item in report["bodyReferences"]:  # type: ignore[assignment]
             if not item["hasField"]:
+                normalized_label = re.sub(r"^(如|见)", "", str(item.get("fieldText") or item.get("label") or ""))
+                normalized_label = re.sub(r"\s+", "", normalized_label).replace(".", "-")
+                if normalized_label not in caption_labels:
+                    issues.append(
+                        {
+                            "severity": "warning",
+                            "type": "static-body-reference",
+                            "label": item["label"],
+                            "paragraphIndex": item["paragraphIndex"],
+                            "repairable": "missing-caption-target",
+                        }
+                    )
+                    continue
                 issues.append(
                     {
                         "severity": "info",
@@ -412,7 +430,58 @@ def audit_docx(docx: Path, source_docx: Path | None = None) -> dict[str, object]
                     }
                 )
 
+    add_completion_gate(report)
     return report
+
+
+def add_completion_gate(report: dict[str, object]) -> None:
+    issues = report.get("issues", [])
+    if not isinstance(issues, list):
+        issues = []
+    manual_confirm = report.get("manualConfirm", [])
+    if not isinstance(manual_confirm, list):
+        manual_confirm = []
+
+    issue_counts = Counter(str(issue.get("type", "unknown")) for issue in issues if isinstance(issue, dict))
+    blocking = [
+        issue
+        for issue in issues
+        if isinstance(issue, dict)
+        and (issue.get("severity") == "error" or str(issue.get("type")) in BLOCKING_ISSUE_TYPES)
+    ]
+    repairable = [
+        issue
+        for issue in issues
+        if isinstance(issue, dict)
+        and str(issue.get("type")) in REPAIRABLE_ISSUE_TYPES
+        and issue.get("repairable") not in {False, None, "missing-caption-target"}
+    ]
+    manual = [
+        issue
+        for issue in issues
+        if isinstance(issue, dict)
+        and str(issue.get("type")) in REPAIRABLE_ISSUE_TYPES
+        and issue.get("repairable") in {False, None, "missing-caption-target"}
+    ]
+    qa_complete = not blocking and not repairable and not manual and not manual_confirm
+    if repairable:
+        next_action = "run-low-risk-repair"
+    elif blocking or manual or manual_confirm:
+        next_action = "manual-confirm-or-script-enhancement"
+    else:
+        next_action = "complete"
+
+    report["completionGate"] = {
+        "qaComplete": qa_complete,
+        "currentPhase": "qa-complete" if qa_complete else "xref-qa",
+        "nextSkill": None if qa_complete else "portable-thesis-xref-qa",
+        "nextAction": next_action,
+        "issueCounts": dict(issue_counts),
+        "blockingIssues": blocking,
+        "repairableIssues": repairable,
+        "manualIssues": manual,
+        "manualConfirmCount": len(manual_confirm),
+    }
 
 
 def write_markdown(report: dict[str, object], path: Path) -> None:
@@ -430,6 +499,8 @@ def write_markdown(report: dict[str, object], path: Path) -> None:
         f"- Body refs: {len(report['bodyReferences'])}",  # type: ignore[arg-type]
         f"- Bibliography citations: {len(report['bibliography']['citations'])}",  # type: ignore[index]
         f"- Issues: {len(report['issues'])}",  # type: ignore[arg-type]
+        f"- QA complete: {report.get('completionGate', {}).get('qaComplete') if isinstance(report.get('completionGate'), dict) else False}",
+        f"- Next action: {report.get('completionGate', {}).get('nextAction') if isinstance(report.get('completionGate'), dict) else 'unknown'}",
         "",
         "## Issues",
         "",
@@ -445,6 +516,7 @@ def main() -> int:
     parser.add_argument("--source-docx", help="Optional original source/template DOCX")
     parser.add_argument("--out-json", help="JSON report path")
     parser.add_argument("--out-md", help="Markdown report path")
+    parser.add_argument("--fail-on-incomplete", action="store_true", help="Exit 2 when completionGate.qaComplete is false")
     args = parser.parse_args()
 
     docx = Path(args.docx).resolve()
@@ -458,6 +530,13 @@ def main() -> int:
     write_markdown(report, out_md)
     print(out_json)
     print(out_md)
+    gate = report.get("completionGate", {})
+    qa_complete = bool(gate.get("qaComplete")) if isinstance(gate, dict) else False
+    next_action = gate.get("nextAction") if isinstance(gate, dict) else "unknown"
+    print(f"QA_COMPLETE={str(qa_complete).lower()}")
+    print(f"NEXT_ACTION={next_action}")
+    if args.fail_on_incomplete and not qa_complete:
+        return 2
     return 0
 
 

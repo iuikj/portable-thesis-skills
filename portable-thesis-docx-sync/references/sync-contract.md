@@ -61,6 +61,18 @@ Required checks:
 - output DOCX opens as a ZIP and has expected Word parts;
 - ZIP part list did not unexpectedly shrink;
 - `SEQ`, `REF`, `PAGEREF`, `fldChar`, `instrText`, and bookmark counts did not decrease unexpectedly;
+- `bookmarkStart` and `bookmarkEnd` ids are paired after replacing any template region;
+- official declaration/authorization pages still exist after initial draft generation;
+- Chinese abstract body and `关键词` exist; English abstract exists when provided;
+- stale template instruction/sample terms and tables are absent from the output;
+- Markdown tables are real Word tables or are explicit manual-confirm blockers;
+- visible Markdown residue is absent outside code-font paragraphs;
 - expected old text is gone and new text is present;
 - `officecli validate` run when available;
 - xref QA run or explicitly deferred.
+
+## Initial Template Replacement
+
+For an initial draft, prefer `replace-template-body`. It preserves front matter and replaces the editable abstract/body/reference/acknowledgement region as one audited operation. `append-before-sectpr` is diagnostic-only for school templates that contain sample body text; it must not be treated as a deliverable because it leaves the sample thesis content and stale TOC entries in place.
+
+After replacing a template region, remove stale bookmark endpoints that became unpaired because a template TOC/bookmark span crossed the replaced region boundary. Record those removed endpoints in the sidecar and verify bookmark pairing again before handoff.

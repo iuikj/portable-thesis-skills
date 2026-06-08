@@ -47,3 +47,13 @@ Before patching, prepare a repair list:
 ```
 
 Apply low-risk repairs, rerun the audit, and stop if the same issue remains but the repair condition is no longer unambiguous.
+
+## Completion Gate
+
+The final audit must write a machine-readable `completionGate`.
+
+- `qaComplete: true` only when there are no blocking errors, no low-risk repairable issues, and no manual-confirm issues.
+- `orphan-ref-targets`, unbalanced fields, and new unpaired bookmarks are blocking.
+- Static figure/table mentions are low-risk repairable only when an unambiguous caption target already exists or can be bookmarked without changing numbering.
+- Static figure/table mentions with no caption target are manual-confirm issues. Do not run `add_refs.py` and claim completion for them; insert or confirm the missing caption/image first.
+- A successful audit or repair script exit is not completion. Use `completionGate.qaComplete`.

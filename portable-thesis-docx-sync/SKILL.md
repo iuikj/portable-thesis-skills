@@ -21,12 +21,14 @@ Use bundled scripts before writing custom code:
 
 ```bash
 python <skill-dir>/scripts/sync_markdown_docx.py --root <project-root> --profile thesis-project.json --plan-out <docx-output>.sync.json
-python <skill-dir>/scripts/sync_markdown_docx.py --root <project-root> --profile thesis-project.json --out <output.docx> --apply
+python <skill-dir>/scripts/sync_markdown_docx.py --root <project-root> --profile thesis-project.json --out <output.docx> --apply --insert-mode replace-template-body
 ```
 
 The helper defaults to plan-only mode. Treat the plan as the review gate. If the helper lacks a needed reusable behavior, patch the helper in this skill and rerun it. Do not create a project-root `sync_to_docx.py` or another one-off large sync script.
 
 The helper must convert common inline Markdown before writing DOCX: `**bold**` and `__bold__` become bold runs, `*italic*`/`_italic_` become italic runs, inline code becomes a code-font run, links become visible link text, and image syntax becomes a visible image placeholder unless a real image insertion path is implemented. Body paragraphs must use a two-character first-line indent (`w:firstLineChars=200`) unless the paragraph is a heading, list item, table row, caption, or other non-body block.
+
+For initial DOCX generation, `replace-template-body` is the default and expected mode. Do not use `append-before-sectpr` for an initial school-template draft unless the user explicitly approves an append-only diagnostic file; that mode preserves stale template sample content and is not deliverable.
 
 ## Core Rules
 
@@ -45,9 +47,18 @@ The helper must convert common inline Markdown before writing DOCX: `**bold**` a
 4. Use template analysis to identify protected and editable regions.
 5. Fill cover metadata using existing tables/content controls where possible.
 6. Replace template sample/instruction text only inside editable regions.
-7. Insert Markdown content conservatively, preserving template styles, inline formatting, and two-character first-line indentation for body paragraphs.
-8. Validate the output and record a `.sync.json` sidecar. Check the sidecar for `markdownInlineFormatting.residueAfterConversion`; any visible Markdown syntax residue must be fixed or documented before handoff.
+7. Insert Markdown content conservatively, preserving template styles, inline formatting, Markdown tables as Word tables, readable code/math blocks, fixed 20 pt line spacing, and two-character first-line indentation for body paragraphs.
+8. Validate the output and record a `.sync.json` sidecar. Check `qualityGate.status`, `sourceProtection.unchanged`, `markdownInlineFormatting.residueAfterConversion`, and `manualConfirm`. Do not report DOCX sync as complete if `qualityGate.status` is `blocked`.
 9. Load and run `portable-thesis-xref-qa` as the closing gate.
+
+The sidecar is the authority for completion. It must show:
+
+- official authorization/declaration pages still present;
+- Chinese abstract body and `关键词` present;
+- no stale template text/tables such as `正文要求`, `Corpus表`, `首页模块`, `课程模块`, or `购物商城模块`;
+- no visible raw Markdown residue outside code blocks;
+- source template hash/size unchanged;
+- `currentPhase: xref-qa` and `nextSkill: portable-thesis-xref-qa` until the xref post-audit gate is clean.
 
 ## Incremental Sync Workflow
 
@@ -92,6 +103,8 @@ Before reporting DOCX sync as complete:
 - Verify no visible `**...**`, `__...__`, backtick inline-code markers, Markdown links, image syntax, or table separator rows remain in body text unless deliberately documented.
 - Verify body paragraphs use two-character first-line indentation; headings, captions, lists, tables, code blocks, references, and front matter may use template-specific indentation instead.
 - If a Markdown construct is unsupported, preserve the meaning in readable DOCX text and list it in `manualConfirm` rather than leaving raw Markdown markup in the final document.
+- Verify Markdown tables became real `w:tbl` tables or are listed as manual-confirm blockers.
+- Verify code identifiers such as `__init__` inside code-font paragraphs are not treated as Markdown residue.
 
 ## Handoff
 
