@@ -22,6 +22,7 @@ Use bundled scripts before writing custom code:
 ```bash
 python <skill-dir>/scripts/sync_markdown_docx.py --root <project-root> --profile thesis-project.json --plan-out <docx-output>.sync.json
 python <skill-dir>/scripts/sync_markdown_docx.py --root <project-root> --profile thesis-project.json --out <output.docx> --apply --insert-mode replace-template-body
+python <portable-thesis-xref-qa>/scripts/xref_audit.py --docx <output.docx> --source-docx <template-or-pre-xref.docx> --sidecar <output.docx>.sync.json --out-json <output.docx>.xref_audit.json
 ```
 
 The helper defaults to plan-only mode. Treat the plan as the review gate. If the helper lacks a needed reusable behavior, patch the helper in this skill and rerun it. Do not create a project-root `sync_to_docx.py` or another one-off large sync script.
@@ -49,7 +50,7 @@ For initial DOCX generation, `replace-template-body` is the default and expected
 6. Replace template sample/instruction text only inside editable regions.
 7. Insert Markdown content conservatively, preserving template styles, inline formatting, Markdown tables as Word tables, readable code/math blocks, fixed 20 pt line spacing, and two-character first-line indentation for body paragraphs.
 8. Validate the output and record a `.sync.json` sidecar. Check `qualityGate.status`, `sourceProtection.unchanged`, `markdownInlineFormatting.residueAfterConversion`, and `manualConfirm`. Do not report DOCX sync as complete if `qualityGate.status` is `blocked`.
-9. Load and run `portable-thesis-xref-qa` as the closing gate.
+9. Load and run `portable-thesis-xref-qa` as the closing gate. Pass the sync sidecar via `--sidecar` so the xref audit registers its reports and updates the parent workflow state.
 
 The sidecar is the authority for completion. It must show:
 
@@ -58,7 +59,8 @@ The sidecar is the authority for completion. It must show:
 - no stale template text/tables such as `正文要求`, `Corpus表`, `首页模块`, `课程模块`, or `购物商城模块`;
 - no visible raw Markdown residue outside code blocks;
 - source template hash/size unchanged;
-- `currentPhase: xref-qa` and `nextSkill: portable-thesis-xref-qa` until the xref post-audit gate is clean.
+- `workflow.currentPhase: xref-qa` and `workflow.nextSkill: portable-thesis-xref-qa` until the xref post-audit gate is clean;
+- after xref audit, `xrefQa.completionGate.qaComplete: true` before reporting QA complete.
 
 ## Incremental Sync Workflow
 
@@ -115,6 +117,8 @@ After generating or updating a DOCX, update `workflow/status.md` or the Trellis 
 - source DOCX path/hash, output DOCX path, sidecar path, and manual-confirm items.
 
 When continuing in the same session, immediately load `portable-thesis-xref-qa/SKILL.md` before auditing or repairing fields.
+
+The sync sidecar is not complete while top-level `nextSkill` or `workflow.nextSkill` is `portable-thesis-xref-qa`. Follow the sidecar's `workflow.xrefAudit.commandArgs` or latest `xrefQa.completionGate.nextAction` rather than relying on a successful script exit.
 
 ## Final Report
 

@@ -757,6 +757,72 @@ def artifact_list(source: Path, output: Path, sidecar: Path) -> list[dict[str, o
     ]
 
 
+def xref_audit_command(output: Path, source: Path, sidecar: Path) -> dict[str, object]:
+    audit_json = output.with_suffix(".xref_audit.json")
+    audit_md = output.with_suffix(".xref_audit.md")
+    return {
+        "docx": str(output),
+        "sourceDocx": str(source),
+        "syncSidecar": str(sidecar),
+        "outJson": str(audit_json),
+        "outMarkdown": str(audit_md),
+        "completionGateRequired": "completionGate.qaComplete must be true before qa-complete.",
+        "commandArgs": [
+            "python",
+            "<portable-thesis-xref-qa>/scripts/xref_audit.py",
+            "--docx",
+            str(output),
+            "--source-docx",
+            str(source),
+            "--sidecar",
+            str(sidecar),
+            "--out-json",
+            str(audit_json),
+            "--out-md",
+            str(audit_md),
+        ],
+    }
+
+
+def workflow_state(
+    *,
+    output: Path,
+    source: Path,
+    sidecar: Path,
+    apply: bool,
+    quality_status: str,
+) -> dict[str, object]:
+    if not apply:
+        return {
+            "currentPhase": "docx-sync-plan-review",
+            "nextSkill": "portable-thesis-docx-sync",
+            "nextAction": "review-plan-then-apply",
+            "qaComplete": False,
+        }
+    if quality_status == "blocked":
+        return {
+            "currentPhase": "docx-sync",
+            "nextSkill": "portable-thesis-docx-sync",
+            "nextAction": "fix-docx-sync-quality-gate",
+            "qaComplete": False,
+            "xrefAuditDeferred": xref_audit_command(output, source, sidecar),
+        }
+    return {
+        "currentPhase": "xref-qa",
+        "nextSkill": "portable-thesis-xref-qa",
+        "nextAction": "run-xref-audit",
+        "qaComplete": False,
+        "xrefAudit": xref_audit_command(output, source, sidecar),
+    }
+
+
+def set_workflow(plan: dict[str, object], workflow: dict[str, object]) -> None:
+    plan["workflow"] = workflow
+    plan["currentPhase"] = workflow.get("currentPhase")
+    plan["nextSkill"] = workflow.get("nextSkill")
+    plan["nextAction"] = workflow.get("nextAction")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", default=".", help="Thesis project root")
@@ -835,6 +901,10 @@ def main() -> int:
         "artifacts": artifact_list(template, output, plan_out),
         "qualityGate": {"status": "plan-review"},
     }
+    set_workflow(
+        plan,
+        workflow_state(output=output, source=template, sidecar=plan_out, apply=False, quality_status="plan-review"),
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     plan_out.parent.mkdir(parents=True, exist_ok=True)
     if args.apply:
@@ -855,6 +925,16 @@ def main() -> int:
         plan["qualityGate"] = gate
         if gate["warnings"]:  # type: ignore[index]
             plan["manualConfirm"] = list(plan["manualConfirm"]) + list(gate["warnings"])  # type: ignore[arg-type]
+        set_workflow(
+            plan,
+            workflow_state(
+                output=output,
+                source=template,
+                sidecar=plan_out,
+                apply=True,
+                quality_status=str(gate.get("status", "unknown")),
+            ),
+        )
     plan_out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     print(plan_out)
     if args.apply:

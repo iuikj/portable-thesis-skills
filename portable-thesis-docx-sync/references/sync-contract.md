@@ -33,9 +33,23 @@ Before editing:
   "artifacts": [
     {"path": "docx/output.sync.json", "role": "sidecar", "cleanup": true},
     {"path": "docx/output.docx", "role": "deliverable", "cleanup": false}
-  ]
+  ],
+  "workflow": {
+    "currentPhase": "xref-qa",
+    "nextSkill": "portable-thesis-xref-qa",
+    "nextAction": "run-xref-audit",
+    "xrefAudit": {
+      "docx": "docx/output.docx",
+      "sourceDocx": "docx/source.docx",
+      "syncSidecar": "docx/output.sync.json",
+      "outJson": "docx/output.xref_audit.json",
+      "completionGateRequired": "completionGate.qaComplete must be true before qa-complete."
+    }
+  }
 }
 ```
+
+The sidecar is still in progress while `workflow.nextSkill` is `portable-thesis-xref-qa`. The xref audit must be run with `--sidecar <output.sync.json>` so `xrefQa.completionGate` and workflow phase are written back to the same sidecar.
 
 ## Patch Safety
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import zipfile
 from collections import Counter
@@ -27,6 +28,120 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def load_json(path: Path) -> dict[str, object]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_json(path: Path, data: dict[str, object]) -> None:
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def artifact_entry(
+    path: Path,
+    *,
+    role: str,
+    kind: str,
+    cleanup: bool,
+    created_by: str,
+    note: str,
+) -> dict[str, object]:
+    return {
+        "path": str(path),
+        "role": role,
+        "kind": kind,
+        "cleanup": cleanup,
+        "created_by": created_by,
+        "note": note,
+    }
+
+
+def upsert_artifact(data: dict[str, object], entry: dict[str, object]) -> None:
+    artifacts = data.setdefault("artifacts", [])
+    if not isinstance(artifacts, list):
+        artifacts = []
+        data["artifacts"] = artifacts
+    entry_path = entry.get("path")
+    if not isinstance(entry_path, str):
+        artifacts.append(entry)
+        return
+    key = os.path.normcase(str(Path(entry_path).resolve()))
+    for index, existing in enumerate(artifacts):
+        if not isinstance(existing, dict):
+            continue
+        existing_path = existing.get("path")
+        if isinstance(existing_path, str) and os.path.normcase(str(Path(existing_path).resolve())) == key:
+            artifacts[index] = entry
+            break
+    else:
+        artifacts.append(entry)
+
+
+def update_sync_sidecar(
+    sidecar: Path,
+    report: dict[str, object],
+    out_json: Path,
+    out_md: Path,
+) -> None:
+    if not sidecar.exists():
+        raise SystemExit(f"sidecar not found: {sidecar}")
+    data = load_json(sidecar)
+    upsert_artifact(
+        data,
+        artifact_entry(
+            out_json,
+            role="intermediate",
+            kind="xref_audit_json",
+            cleanup=True,
+            created_by="xref_audit.py",
+            note="Cross-reference QA audit JSON; keep until the final DOCX is accepted.",
+        ),
+    )
+    upsert_artifact(
+        data,
+        artifact_entry(
+            out_md,
+            role="intermediate",
+            kind="xref_audit_markdown",
+            cleanup=True,
+            created_by="xref_audit.py",
+            note="Cross-reference QA audit Markdown summary; keep until the final DOCX is accepted.",
+        ),
+    )
+    gate = report.get("completionGate", {})
+    if not isinstance(gate, dict):
+        gate = {
+            "qaComplete": False,
+            "currentPhase": "xref-qa",
+            "nextSkill": "portable-thesis-xref-qa",
+            "nextAction": "manual-confirm-or-script-enhancement",
+        }
+    qa_complete = bool(gate.get("qaComplete"))
+    data["xrefQa"] = {
+        "latestAuditJson": str(out_json),
+        "latestAuditMarkdown": str(out_md),
+        "completionGate": gate,
+        "issueCount": len(report.get("issues", [])) if isinstance(report.get("issues"), list) else None,
+    }
+    workflow = data.get("workflow")
+    if not isinstance(workflow, dict):
+        workflow = {}
+    workflow.update(
+        {
+            "qaComplete": qa_complete,
+            "currentPhase": gate.get("currentPhase") or ("qa-complete" if qa_complete else "xref-qa"),
+            "nextSkill": gate.get("nextSkill"),
+            "nextAction": gate.get("nextAction") or ("complete" if qa_complete else "manual-confirm-or-script-enhancement"),
+            "latestXrefAudit": str(out_json),
+            "latestXrefMarkdown": str(out_md),
+        }
+    )
+    data["workflow"] = workflow
+    data["currentPhase"] = workflow["currentPhase"]
+    data["nextSkill"] = workflow["nextSkill"]
+    data["nextAction"] = workflow["nextAction"]
+    write_json(sidecar, data)
 
 
 def text_of_para(para: etree._Element) -> str:
@@ -514,6 +629,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--docx", required=True, help="DOCX copy to audit")
     parser.add_argument("--source-docx", help="Optional original source/template DOCX")
+    parser.add_argument("--sidecar", help="Optional .sync.json sidecar to update with xref QA workflow state")
     parser.add_argument("--out-json", help="JSON report path")
     parser.add_argument("--out-md", help="Markdown report path")
     parser.add_argument("--fail-on-incomplete", action="store_true", help="Exit 2 when completionGate.qaComplete is false")
@@ -526,8 +642,10 @@ def main() -> int:
     out_json = Path(args.out_json).resolve() if args.out_json else docx.with_suffix(".xref_audit.json")
     out_md = Path(args.out_md).resolve() if args.out_md else docx.with_suffix(".xref_audit.md")
     out_json.parent.mkdir(parents=True, exist_ok=True)
-    out_json.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json(out_json, report)
     write_markdown(report, out_md)
+    if args.sidecar:
+        update_sync_sidecar(Path(args.sidecar).resolve(), report, out_json, out_md)
     print(out_json)
     print(out_md)
     gate = report.get("completionGate", {})

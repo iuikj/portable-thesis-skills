@@ -57,3 +57,5 @@ The final audit must write a machine-readable `completionGate`.
 - Static figure/table mentions are low-risk repairable only when an unambiguous caption target already exists or can be bookmarked without changing numbering.
 - Static figure/table mentions with no caption target are manual-confirm issues. Do not run `add_refs.py` and claim completion for them; insert or confirm the missing caption/image first.
 - A successful audit or repair script exit is not completion. Use `completionGate.qaComplete`.
+
+When the audit is the closing gate for a DOCX sync, pass the sync sidecar to `xref_audit.py` with `--sidecar`. The audit must register its JSON/Markdown reports in `artifacts[]`, copy `completionGate` into `xrefQa.completionGate`, and update `workflow.currentPhase`, `workflow.nextSkill`, and `workflow.nextAction`. A parent sidecar that still says `workflow.nextSkill: portable-thesis-xref-qa` is not complete.

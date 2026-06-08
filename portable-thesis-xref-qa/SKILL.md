@@ -19,9 +19,9 @@ Read `references/xref-contract.md` before applying repairs.
 Use bundled scripts before writing custom code:
 
 ```bash
-python <skill-dir>/scripts/xref_audit.py --docx <output.docx> --source-docx <pre-repair-output-or-template.docx>
+python <skill-dir>/scripts/xref_audit.py --docx <output.docx> --source-docx <pre-repair-output-or-template.docx> --sidecar <output.docx>.sync.json --out-json <output.docx>.xref_audit.json
 python <skill-dir>/scripts/add_refs.py --docx <output.docx> --out <output_xref.docx> --apply
-python <skill-dir>/scripts/xref_audit.py --docx <output_xref.docx> --source-docx <output.docx>
+python <skill-dir>/scripts/xref_audit.py --docx <output_xref.docx> --source-docx <output.docx> --out-json <output_xref.docx>.xref_audit.json
 ```
 
 Do not create project-root scripts such as `xref_qa_audit.py` or `add_bidirectional_refs.py`. If the bundled audit or repair script is insufficient, patch the script in this skill and rerun it so the behavior remains reusable.
@@ -71,6 +71,8 @@ After `xref_audit.py`, inspect the JSON issues and counts:
 - Report both pre-repair and post-repair counts.
 - Set `workflow/status.md` to `currentPhase: xref-qa` and `nextSkill: portable-thesis-xref-qa` while repairable or manual-confirm issues remain. Set `qa-complete` only when the post-repair audit JSON has `completionGate.qaComplete: true`.
 - Treat `completionGate` as authoritative. `orphan-ref-targets`, unbalanced fields, new unpaired bookmarks, remaining repairable static citations/references, and static figure/table mentions with missing caption targets all prevent `qa-complete`. Do not infer completion from a successful script exit alone.
+- When the audit is part of `portable-thesis-docx-sync`, always pass its `.sync.json` with `--sidecar`; the audit script updates `workflow.currentPhase`, `workflow.nextSkill`, and `xrefQa.completionGate` in that sidecar.
+- If `add_refs.py` repairs anything, open its repair sidecar and follow `workflow.postRepairAudit.commandArgs` immediately. A repair sidecar with `nextAction: run-post-repair-audit` is not a completed QA state.
 - If using a shell where heredoc quoting conflicts with Markdown or XML snippets, write temporary helper input files under the project `workflow/` or OS temp directory, run them, then record and clean them. Do not leave large helper scripts in the thesis project root.
 
 ## Manual Confirmation Items

@@ -595,6 +595,20 @@ def run_repair(input_docx: Path, output_docx: Path) -> dict[str, object]:
             "postRepairAudit": {
                 "docx": str(output_docx),
                 "sourceDocx": str(input_docx),
+                "outJson": str(output_docx.with_suffix(".xref_audit.json")),
+                "outMarkdown": str(output_docx.with_suffix(".xref_audit.md")),
+                "commandArgs": [
+                    "python",
+                    "<portable-thesis-xref-qa>/scripts/xref_audit.py",
+                    "--docx",
+                    str(output_docx),
+                    "--source-docx",
+                    str(input_docx),
+                    "--out-json",
+                    str(output_docx.with_suffix(".xref_audit.json")),
+                    "--out-md",
+                    str(output_docx.with_suffix(".xref_audit.md")),
+                ],
             },
         },
         "notes": [
