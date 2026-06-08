@@ -75,6 +75,70 @@ def field_type(instr: str) -> str:
     return parts[0].upper() if parts else "UNKNOWN"
 
 
+def field_result_spans(para: etree._Element) -> list[dict[str, object]]:
+    """Return visible-text spans occupied by field results in text_of_para coordinates."""
+    spans: list[dict[str, object]] = []
+    cursor = 0
+    current: dict[str, object] | None = None
+    instr_parts: list[str] = []
+    in_result = False
+    result_start: int | None = None
+
+    for run in para.iter(f"{W}r"):
+        fld_char = run.find(f"{W}fldChar")
+        instr_text = run.find(f"{W}instrText")
+
+        if fld_char is not None:
+            fld_type = fld_char.get(f"{W}fldCharType")
+            if fld_type == "begin":
+                current = {"instr": ""}
+                instr_parts = []
+                in_result = False
+                result_start = None
+            elif fld_type == "separate" and current is not None:
+                current["instr"] = "".join(instr_parts).strip()
+                in_result = True
+                result_start = cursor
+
+        if current is not None and instr_text is not None and not in_result:
+            instr_parts.append(instr_text.text or "")
+
+        cursor += sum(len(t.text or "") for t in run.findall(f"{W}t"))
+
+        if fld_char is not None and fld_char.get(f"{W}fldCharType") == "end" and current is not None:
+            if result_start is not None:
+                instr = str(current.get("instr", ""))
+                spans.append({"start": result_start, "end": cursor, "instr": instr, "type": field_type(instr)})
+            current = None
+            instr_parts = []
+            in_result = False
+            result_start = None
+
+    cursor = 0
+    for child in para:
+        child_text_len = sum(len(t.text or "") for t in child.iter(f"{W}t"))
+        if child.tag == f"{W}fldSimple":
+            instr = child.get(f"{W}instr", "").strip()
+            spans.append({"start": cursor, "end": cursor + child_text_len, "instr": instr, "type": field_type(instr)})
+        cursor += child_text_len
+
+    return spans
+
+
+def range_covered_by_field(
+    para: etree._Element,
+    start: int,
+    end: int,
+    allowed_types: set[str] | None = None,
+) -> bool:
+    for span in field_result_spans(para):
+        if allowed_types is not None and str(span["type"]) not in allowed_types:
+            continue
+        if int(span["start"]) <= start and end <= int(span["end"]):
+            return True
+    return False
+
+
 def ref_target(instr: str) -> str | None:
     parts = instr.strip().split()
     if len(parts) >= 2 and parts[0].upper() in {"REF", "PAGEREF"}:
@@ -223,12 +287,14 @@ def audit_docx(docx: Path, source_docx: Path | None = None) -> dict[str, object]
 
             cap_match = caption_pat.search(text)
             if cap_match:
+                cap_start = cap_match.start(1)
+                cap_end = cap_match.end(1)
                 report["captions"].append(
                     {
                         "paragraphIndex": idx,
                         "label": cap_match.group(1),
                         "text": text[:200],
-                        "hasField": bool(para_fields),
+                        "hasField": range_covered_by_field(para, cap_start, cap_end, {"SEQ", "REF"}),
                     }
                 )
                 continue
@@ -243,12 +309,20 @@ def audit_docx(docx: Path, source_docx: Path | None = None) -> dict[str, object]
                 continue
 
             for match in body_label_pat.finditer(text):
+                label_match = re.search(
+                    r"(图|表|算法|Figure|Table|Algorithm|Fig\.|Tbl\.)\s*\d+[-.]\d+",
+                    match.group(1),
+                    re.IGNORECASE,
+                )
+                field_start = match.start(1) + (label_match.start(0) if label_match else 0)
+                field_end = match.start(1) + (label_match.end(0) if label_match else len(match.group(1)))
                 report["bodyReferences"].append(
                     {
                         "paragraphIndex": idx,
                         "label": match.group(1),
+                        "fieldText": label_match.group(0) if label_match else match.group(1),
                         "context": text[:220],
-                        "hasField": bool(para_fields),
+                        "hasField": range_covered_by_field(para, field_start, field_end, {"REF", "PAGEREF"}),
                     }
                 )
             for match in cite_pat.finditer(text):
@@ -260,7 +334,7 @@ def audit_docx(docx: Path, source_docx: Path | None = None) -> dict[str, object]
                         "paragraphIndex": idx,
                         "label": match.group(0),
                         "context": text[:220],
-                        "hasField": bool(para_fields),
+                        "hasField": range_covered_by_field(para, match.start(0), match.end(0), {"REF"}),
                     }
                 )
 

@@ -73,12 +73,13 @@ If the target project has no Trellis, create `workflow/` under the thesis root a
 
 4. Initial DOCX:
    Load `portable-thesis-docx-sync`. Generate a sync plan first, then copy the template and fill/replace only the content regions that the template analysis marks as editable. Preserve cover pages, declarations, authorization pages, headers, footers, styles, fields, and TOC structures unless the user explicitly changes them.
+   Before handing off, verify the sync sidecar and output DOCX for converted inline Markdown, no visible Markdown residue, and two-character first-line indentation in body paragraphs.
 
 5. Iteration:
    Track Markdown changes in git. Sync only targeted changes into a protected DOCX copy and tag synced commits with the configured `baselineTagPrefix`.
 
 6. Closing QA:
-   Load `portable-thesis-xref-qa` on the output DOCX. Run its bundled audit script before any repair. Report field integrity, caption/reference status, bibliography citation status, validation results, and render QA status.
+   Load `portable-thesis-xref-qa` on the output DOCX. Run its bundled audit script before any repair, then continue in that same child skill invocation through low-risk repair and post-repair audit when repairable issues exist. Do not stop after a prose audit unless there are no repairable issues or the next change needs user confirmation. Report pre/post counts, field integrity, caption/reference status, bibliography citation status, validation results, and render QA status.
 
 ## Non-Negotiable Rules
 
@@ -89,6 +90,7 @@ If the target project has no Trellis, create `workflow/` under the thesis root a
 - Preserve Word fields and bookmarks: never flatten `SEQ`, `REF`, `PAGEREF`, `fldChar`, `instrText`, or bookmarks during sync or QA.
 - Ask for user confirmation before any repair that changes numbering, inserts missing captions, or may alter official front matter.
 - Do not write large one-off scripts such as `analyze_template.py`, `sync_to_docx.py`, `xref_qa_audit.py`, or `add_bidirectional_refs.py` into the thesis project root. Use bundled child-skill scripts. If a bundled script is insufficient, patch or extend the child skill resource and rerun it, so the fix remains reusable.
+- If shell heredoc syntax conflicts with Markdown, XML, or Windows quoting, write only small temporary helper input files under `workflow/` or the OS temp directory, execute them, record the reason, and clean them. Do not leave reusable logic as project-local temporary scripts.
 - At every phase transition, write `workflow/status.md` with `currentPhase`, completed artifacts, and `nextSkill`. The next action must name the child skill to load, not just describe the task.
 
 ## Final Report

@@ -36,7 +36,8 @@ Do not create project-root scripts such as `xref_qa_audit.py` or `add_bidirectio
 - Disable `officecli` resident/background behavior for read-only validation when supported.
 - Audit first, repair second, audit again after repair. Do not repair from memory or from a prose-only issue list.
 - For the post-repair audit, pass the pre-repair DOCX copy as `--source-docx`. This lets inherited source noise, such as existing orphan bookmarkEnd ids, be reported separately from new repair damage.
-- The bundled `add_refs.py` is low-risk only. It may add fields/bookmarks for unambiguous static captions, body labels, bibliography entries, and citation markers. Anything beyond that is a manual-confirm item or a reusable script enhancement.
+- The bundled `add_refs.py` is low-risk only. It may add bookmarks around existing unambiguous caption labels and bibliography markers, then replace matching static body labels and citation markers with `REF` fields. It must not convert chapter-style caption numbers into new `SEQ` fields automatically, and bookmarks must wrap only the label/marker text, not the whole caption or bibliography paragraph. Anything beyond that is a manual-confirm item or a reusable script enhancement.
+- Do not stop after audit when the audit reports low-risk repairable issues. In the same invocation of this skill, continue to the repair phase with `add_refs.py --apply`, then run a post-repair audit. Only stop after audit when there are no repairable issues or when the remaining items require manual confirmation.
 
 ## Audit Categories
 
@@ -59,6 +60,17 @@ Apply only when the target is unambiguous:
 - Replace each endpoint of a range reference with its own `REF` field while preserving ordinary separator text.
 - Replace a static bibliography marker with a `REF` field pointing to an existing bibliography bookmark.
 - Add superscript formatting to cached bibliography REF display text.
+
+## Audit-to-Repair Flow
+
+After `xref_audit.py`, inspect the JSON issues and counts:
+
+- If issues include `static-body-reference`, `static-bibliography-citation`, or no `REF` fields while unambiguous captions/bibliography entries exist, immediately run `add_refs.py --apply` on a new output copy.
+- Treat missing caption `SEQ` fields as manual-confirm unless the template-specific numbering rule is known; do not ask `add_refs.py` to synthesize chapter-style `SEQ` fields from plain text captions.
+- Then rerun `xref_audit.py` on the repaired copy with `--source-docx <pre-repair-docx>`.
+- Report both pre-repair and post-repair counts.
+- Set `workflow/status.md` to `currentPhase: xref-qa` and `nextSkill: portable-thesis-xref-qa` while repairable issues remain. Set `qa-complete` only after the repair pass and post-repair audit.
+- If using a shell where heredoc quoting conflicts with Markdown or XML snippets, write temporary helper input files under the project `workflow/` or OS temp directory, run them, then record and clean them. Do not leave large helper scripts in the thesis project root.
 
 ## Manual Confirmation Items
 
@@ -95,7 +107,7 @@ After QA, update `workflow/status.md` or the Trellis task with:
 - audit JSON/Markdown paths;
 - repair sidecar path if repairs were applied;
 - remaining `manualConfirm` items;
-- the next skill only if further work is required.
+- `nextSkill: portable-thesis-xref-qa` when a repair pass is still required; otherwise omit `nextSkill` or set it to `None`.
 
 ## Final Report
 

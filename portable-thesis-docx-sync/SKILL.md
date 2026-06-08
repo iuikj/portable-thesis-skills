@@ -26,6 +26,8 @@ python <skill-dir>/scripts/sync_markdown_docx.py --root <project-root> --profile
 
 The helper defaults to plan-only mode. Treat the plan as the review gate. If the helper lacks a needed reusable behavior, patch the helper in this skill and rerun it. Do not create a project-root `sync_to_docx.py` or another one-off large sync script.
 
+The helper must convert common inline Markdown before writing DOCX: `**bold**` and `__bold__` become bold runs, `*italic*`/`_italic_` become italic runs, inline code becomes a code-font run, links become visible link text, and image syntax becomes a visible image placeholder unless a real image insertion path is implemented. Body paragraphs must use a two-character first-line indent (`w:firstLineChars=200`) unless the paragraph is a heading, list item, table row, caption, or other non-body block.
+
 ## Core Rules
 
 - Never edit the source template or source DOCX directly.
@@ -43,8 +45,8 @@ The helper defaults to plan-only mode. Treat the plan as the review gate. If the
 4. Use template analysis to identify protected and editable regions.
 5. Fill cover metadata using existing tables/content controls where possible.
 6. Replace template sample/instruction text only inside editable regions.
-7. Insert Markdown content conservatively, preserving template styles.
-8. Validate the output and record a `.sync.json` sidecar.
+7. Insert Markdown content conservatively, preserving template styles, inline formatting, and two-character first-line indentation for body paragraphs.
+8. Validate the output and record a `.sync.json` sidecar. Check the sidecar for `markdownInlineFormatting.residueAfterConversion`; any visible Markdown syntax residue must be fixed or documented before handoff.
 9. Load and run `portable-thesis-xref-qa` as the closing gate.
 
 ## Incremental Sync Workflow
@@ -82,6 +84,14 @@ Ask before:
 - adding missing captions that may renumber existing captions;
 - flattening, updating, or deleting Word fields;
 - deleting intermediate artifacts.
+
+## Markdown Conversion Checks
+
+Before reporting DOCX sync as complete:
+
+- Verify no visible `**...**`, `__...__`, backtick inline-code markers, Markdown links, image syntax, or table separator rows remain in body text unless deliberately documented.
+- Verify body paragraphs use two-character first-line indentation; headings, captions, lists, tables, code blocks, references, and front matter may use template-specific indentation instead.
+- If a Markdown construct is unsupported, preserve the meaning in readable DOCX text and list it in `manualConfirm` rather than leaving raw Markdown markup in the final document.
 
 ## Handoff
 

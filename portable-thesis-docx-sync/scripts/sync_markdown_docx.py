@@ -14,6 +14,7 @@ import hashlib
 import json
 import re
 import shutil
+import stat
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,13 @@ from lxml import etree
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 W = f"{{{W_NS}}}"
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+INLINE_TOKEN_RE = re.compile(
+    r"(!\[[^\]]*\]\([^)]+\)|`[^`]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|(?<![\w*])\*[^*\s][^*\n]*?\*(?![\w*])|(?<![\w_])_[^_\s][^_\n]*?_(?![\w_])|~~[^~\n]+~~|\[[^\]]+\]\([^)]+\))"
+)
+MARKDOWN_RESIDUE_RE = re.compile(
+    r"(\*\*[^*\n]+\*\*|__[^_\n]+__|(?<![\w*])\*[^*\s][^*\n]*?\*(?![\w*])|(?<![\w_])_[^_\s][^_\n]*?_(?![\w_])|`[^`]+`|!\[[^\]]*\]\([^)]+\)|\[[^\]]+\]\([^)]+\)|~~[^~\n]+~~)"
+)
+TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
 
 
 def sha256(path: Path) -> str:
@@ -51,21 +59,89 @@ def resolve_from_profile(root: Path, profile: dict[str, object], dotted: str) ->
     return path if path.is_absolute() else root / path
 
 
-def text_run(text: str) -> etree._Element:
+def text_run(
+    text: str,
+    *,
+    bold: bool = False,
+    italic: bool = False,
+    code: bool = False,
+    strike: bool = False,
+) -> etree._Element:
     run = etree.Element(f"{W}r")
+    if bold or italic or code or strike:
+        props = etree.SubElement(run, f"{W}rPr")
+        if bold:
+            etree.SubElement(props, f"{W}b")
+        if italic:
+            etree.SubElement(props, f"{W}i")
+        if code:
+            font = etree.SubElement(props, f"{W}rFonts")
+            font.set(f"{W}ascii", "Consolas")
+            font.set(f"{W}hAnsi", "Consolas")
+        if strike:
+            etree.SubElement(props, f"{W}strike")
     t = etree.SubElement(run, f"{W}t")
     t.set(XML_SPACE, "preserve")
     t.text = text
     return run
 
 
-def paragraph(text: str, style: str | None = None) -> etree._Element:
-    para = etree.Element(f"{W}p")
+def add_paragraph_props(para: etree._Element, style: str | None, first_line_chars: int | None) -> None:
+    if not style and not first_line_chars:
+        return
+    props = etree.SubElement(para, f"{W}pPr")
     if style:
-        props = etree.SubElement(para, f"{W}pPr")
         pstyle = etree.SubElement(props, f"{W}pStyle")
         pstyle.set(f"{W}val", style)
-    para.append(text_run(text))
+    if first_line_chars:
+        indent = etree.SubElement(props, f"{W}ind")
+        indent.set(f"{W}firstLineChars", str(first_line_chars))
+
+
+def inline_runs(markdown_text: str) -> list[etree._Element]:
+    """Convert common inline Markdown to Word runs.
+
+    This intentionally handles only low-risk inline syntax. Block-level parsing
+    stays in markdown_blocks().
+    """
+    runs: list[etree._Element] = []
+    pos = 0
+    for match in INLINE_TOKEN_RE.finditer(markdown_text):
+        if match.start() > pos:
+            runs.append(text_run(markdown_text[pos : match.start()]))
+        token = match.group(0)
+        if token.startswith("**") and token.endswith("**"):
+            runs.append(text_run(token[2:-2], bold=True))
+        elif token.startswith("__") and token.endswith("__"):
+            runs.append(text_run(token[2:-2], bold=True))
+        elif token.startswith("*") and token.endswith("*"):
+            runs.append(text_run(token[1:-1], italic=True))
+        elif token.startswith("_") and token.endswith("_"):
+            runs.append(text_run(token[1:-1], italic=True))
+        elif token.startswith("`") and token.endswith("`"):
+            runs.append(text_run(token[1:-1], code=True))
+        elif token.startswith("~~") and token.endswith("~~"):
+            runs.append(text_run(token[2:-2], strike=True))
+        elif token.startswith("!["):
+            image = re.match(r"!\[([^\]]*)\]\(([^)]+)\)", token)
+            alt = image.group(1).strip() if image else ""
+            target = image.group(2).strip() if image else ""
+            label = alt or Path(target).name or "image"
+            runs.append(text_run(f"[Image: {label}]"))
+        else:
+            link = re.match(r"\[([^\]]+)\]\(([^)]+)\)", token)
+            runs.append(text_run(link.group(1) if link else token))
+        pos = match.end()
+    if pos < len(markdown_text):
+        runs.append(text_run(markdown_text[pos:]))
+    return runs or [text_run("")]
+
+
+def paragraph(text: str, style: str | None = None, *, first_line_chars: int | None = None) -> etree._Element:
+    para = etree.Element(f"{W}p")
+    add_paragraph_props(para, style, first_line_chars)
+    for run in inline_runs(text):
+        para.append(run)
     return para
 
 
@@ -85,6 +161,8 @@ def markdown_blocks(md_dir: Path) -> list[dict[str, object]]:
             if line.startswith(">"):
                 continue
             heading = re.match(r"^(#{1,6})\s+(.+)$", line)
+            unordered = re.match(r"^\s*[-*+]\s+(.+)$", line)
+            ordered = re.match(r"^\s*\d+[.)]\s+(.+)$", line)
             if heading:
                 blocks.append(
                     {
@@ -94,11 +172,37 @@ def markdown_blocks(md_dir: Path) -> list[dict[str, object]]:
                         "text": heading.group(2).strip(),
                     }
                 )
+            elif TABLE_SEPARATOR_RE.match(line):
+                continue
+            elif unordered:
+                blocks.append({"source": str(path), "type": "list-item", "text": unordered.group(1).strip()})
+            elif ordered:
+                blocks.append({"source": str(path), "type": "ordered-list-item", "text": ordered.group(1).strip()})
             elif line.startswith("|"):
-                blocks.append({"source": str(path), "type": "table-text", "text": line.strip()})
+                cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+                blocks.append({"source": str(path), "type": "table-row", "text": "\t".join(cells), "cells": cells})
             else:
                 blocks.append({"source": str(path), "type": "paragraph", "text": line.strip()})
     return blocks
+
+
+def markdown_residue(blocks: list[dict[str, object]]) -> list[dict[str, object]]:
+    residue: list[dict[str, object]] = []
+    for block in blocks:
+        text = str(block.get("text", ""))
+        if not text:
+            continue
+        matches = [m.group(0) for m in MARKDOWN_RESIDUE_RE.finditer(text)]
+        if matches:
+            residue.append(
+                {
+                    "source": block.get("source"),
+                    "type": block.get("type"),
+                    "matches": matches[:10],
+                    "text": text[:200],
+                }
+            )
+    return residue
 
 
 def block_to_para(block: dict[str, object], styles: dict[str, str]) -> etree._Element:
@@ -107,9 +211,23 @@ def block_to_para(block: dict[str, object], styles: dict[str, str]) -> etree._El
         level = int(block["level"])
         style = styles.get(f"heading{level}") or styles.get("heading") or "Heading1"
         return paragraph(text, style)
-    if block["type"] == "table-text":
-        return paragraph(text, styles.get("tableText") or styles.get("normal") or "Normal")
-    return paragraph(text, styles.get("normal") or "Normal")
+    if block["type"] == "table-row":
+        return paragraph(text, styles.get("tableText") or styles.get("normal") or "Normal", first_line_chars=None)
+    if block["type"] in {"list-item", "ordered-list-item"}:
+        return paragraph(text, styles.get("normal") or "Normal", first_line_chars=None)
+    return paragraph(text, styles.get("normal") or "Normal", first_line_chars=200)
+
+
+def visible_markdown_residue(docx: Path) -> list[dict[str, object]]:
+    with zipfile.ZipFile(docx, "r") as zf:
+        root = etree.fromstring(zf.read("word/document.xml"))
+    residue: list[dict[str, object]] = []
+    for idx, para in enumerate(root.iter(f"{W}p")):
+        text = "".join(t.text or "" for t in para.iter(f"{W}t"))
+        matches = [m.group(0) for m in MARKDOWN_RESIDUE_RE.finditer(text)]
+        if matches:
+            residue.append({"paragraphIndex": idx, "matches": matches[:10], "text": text[:200]})
+    return residue
 
 
 def default_style_map(analysis: dict[str, object]) -> dict[str, str]:
@@ -155,6 +273,7 @@ def insertion_index(body: etree._Element, mode: str, anchor_text: str | None) ->
 
 def apply_sync(template: Path, output: Path, blocks: list[dict[str, object]], styles: dict[str, str], mode: str, anchor_text: str | None) -> None:
     shutil.copy2(template, output)
+    output.chmod(output.stat().st_mode | stat.S_IREAD | stat.S_IWRITE)
     with zipfile.ZipFile(template, "r") as zin:
         root = etree.fromstring(zin.read("word/document.xml"))
         body = root.find(f"{W}body")
@@ -207,6 +326,7 @@ def main() -> int:
     output = Path(args.out).resolve() if args.out else docx_dir / f"{template.stem}_draft_{sha256(template)[:8]}.docx"
     plan_out = Path(args.plan_out).resolve() if args.plan_out else output.with_suffix(output.suffix + ".sync.json")
     blocks = markdown_blocks(md_dir)
+    residue = markdown_residue(blocks)
     styles = default_style_map(analysis)
     plan = {
         "schemaVersion": 1,
@@ -219,6 +339,11 @@ def main() -> int:
         "insertMode": args.insert_mode,
         "anchorText": args.anchor_text,
         "blockCount": len(blocks),
+        "markdownInlineFormatting": {
+            "supported": ["bold", "italic", "inline-code", "strikethrough", "markdown-links-as-text"],
+            "firstLineIndentCharsForBody": 200,
+            "residueBeforeConversion": residue[:50],
+        },
         "styles": styles,
         "manualConfirm": [] if args.apply else ["Review insertion mode and style mapping before --apply."],
     }
@@ -228,6 +353,7 @@ def main() -> int:
         apply_sync(template, output, blocks, styles, args.insert_mode, args.anchor_text)
         plan["outputSha256"] = sha256(output)
         plan["outputSize"] = output.stat().st_size
+        plan["markdownInlineFormatting"]["residueAfterConversion"] = visible_markdown_residue(output)[:50]
     plan_out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     print(plan_out)
     if args.apply:
